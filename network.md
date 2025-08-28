@@ -44,7 +44,16 @@ Consider the server. The server is connected to multiple clients and server. Whe
 The server creates a new thread for a client connection. When a new message arrives, a new thread is spawned to handle it. This allows multiple rec() calls to block on different threads without affecting each other. This is still suboptimal as you are limited by the number of threads your cpus can run parallely(it can allow spawning of many threads but can run only a $N$ number of threads parallely where $N$ is the number of cores in your system. Each threads take memory and cpu resources. 
 
 #### Asynchronous I/O 
-Modern OS support something called asynchronous I/O (epoll in linux, Input / Output Completion Port (IOCP))
+Modern OS support something called asynchronous I/O (epoll in linux, Input / Output Completion Port (IOCP)). We will be dealing with IOCP as we are in a windows system. It is a efficient threading model which can used to perform async I/O. Basically you can associate a port with list of file handles(your sockets, everything is a file in linux). This creates I/O completion port. You can allocate a thread pool which handles all communication from this IOCP. All the threads is waiting on a event happening on one of the the file handles. Essentially your threads registers your sockets to the OS and it tells the OS if any event happens on any of the sockets associated with me let me know. You can do this with **WSARecv** or **AcceptEx**. The function return immediately and DMA does the data transfer in the background. The thread goes to sleep waiting for I/O related to any of the socket to complete and is woken up from the OS from a getCompletionRequest(). 
+
+#### Coroutines 
+Now that we know we can handle async I/O we need a system to handle these I/O efficiently. Traditionally callbacks have been popular for these tasks. Callbacks are essentially function that the OS will run when the async I/O complete. I have not used callbacks outside of very simple scenarios but apparently callbacks can become very complicated very soon. My understanding is it is not necessarily the performance but rather code complexity. Coroutines allows you to write async I/O code almost exactly synchronous code and hence makes it easier to manage the code complexity. So what are coroutines and how do they work ? 
+
+During the course of this exercise coroutine was the most difficult part for me to understand. I am still not sure I understand them well even now. I will not go too deeply into mechanism and the underlying details. I recommend these two blogs for understanding coroutines 
+* https://theshoemaker.de/posts/yet-another-cpp-coroutine-tutorial
+* https://lewissbaker.github.io/2022/08/27/understanding-the-compiler-transform
+
+When one uses thread for managing I/O in a traditional manner, the thread cannot be used when waiting on I/O. Coroutines allow one to use the thread for other useful task while waiting on I/O. There is a lot of syntax related details which allows your compiler to transform your function to a coroutine. Basically any piece of function which contains any of the following keyword **co_await**, **co-return** or **co_yield** is coroutine. Now your co_await needs a awaitable structure which is essentially the thing the coroutine is waiting on. For example a readAwaitable is a awaitable structure that the coroutine can "await" on. The readAwaitable is handling the network call. Let me give an example of how control flow of how coroutine would work such a 
 
 
 

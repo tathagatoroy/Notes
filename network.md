@@ -53,8 +53,86 @@ During the course of this exercise coroutine was the most difficult part for me 
 * https://theshoemaker.de/posts/yet-another-cpp-coroutine-tutorial
 * https://lewissbaker.github.io/2022/08/27/understanding-the-compiler-transform
 
-When one uses thread for managing I/O in a traditional manner, the thread cannot be used when waiting on I/O. Coroutines allow one to use the thread for other useful task while waiting on I/O. There is a lot of syntax related details which allows your compiler to transform your function to a coroutine. Basically any piece of function which contains any of the following keyword **co_await**, **co-return** or **co_yield** is coroutine. Now your co_await needs a awaitable structure which is essentially the thing the coroutine is waiting on. For example a readAwaitable is a awaitable structure that the coroutine can "await" on. The readAwaitable is handling the network call. Let me give an example of how control flow of how coroutine would work such a 
+When one uses thread for managing I/O in a traditional manner, the thread cannot be used when waiting on I/O. Coroutines allow one to use the thread for other useful task while waiting on I/O. There is a lot of syntax related details which allows your compiler to transform your function to a coroutine. Basically any piece of function which contains any of the following keyword **co_await**, **co-return** or **co_yield** is coroutine. Now your co_await needs a awaitable structure which is essentially the thing the coroutine is waiting on. For example a readAwaitable is a awaitable structure that the coroutine can "await" on. The readAwaitable is handling the network call. Let me give an example of how control flow of how coroutine would work such for such a task.
+Every awaitable needs to implement three functions 
 
+1.**await_ready** : This is triggered when a coroutine encounters a co_await awaitable. This defines when suspension of the coroutine is actually necessary. For example if I am awaiting a read on a socket, if the data is already present in the socket buffer I can immediately read it and hence no need for me to suspend my coroutine. 
+
+2.**await_suspend(coroutine_handle)** : this is called when the await_ready function returns false. Now we are preparing for the coroutine to actually suspend. Note that at current point of the coroutine we have local state, which includes all the local variables , instruction pointer in the local stack.
+
+1. Lets say the main server thread. It needs to read data from a socket. It calls 
+```
+co_await readAwaitable(socket, buffer)
+```
+Note that this looks like synchronous code.
+
+### Code run through
+
+The full code can be found [here](https://github.com/tathagatoroy/distributedKVStore/blob/main/includes/network.h)
+#### winsockSetter
+* the class **winSockSetter** intialiases the winsock library with 2.2 version and prepares the necessary system resources.
+#### ioContext
+ 
+ The ioContext is struct which stores the following details 
+ * OVERLAPPED struct : This is a windows defined struct contains windows context and details needed for doing overlapped(non blocking) I/O like number of bytes transfered and status of the IO. More details about the struct can be found [here](https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-overlapped). Most of the fields in this struct is field by the OS while actually doing the I/O
+ * coroutine_handle<> continueation : When co-routine transfer its control to awaiable Event, the local context of the co-routine is copied to the heap which can later used to restore and resume the coroutine.
+ * buffer : span datastructure to send/receive message 
+ * bytesTransfered : stores the number of bytes read/received
+ * lastError : stores the lastError communicated by the read/write
+
+#### ioService 
+This class implements a IOCP port and associated threadpool.
+* handle to a IOCP port 
+* vector of worker threads which services the IOCP port 
+* a boolean flag called running to indicate whether the port is running or not 
+
+It also implements the following class : 
+* ```ioService(numThreads)``` -> creates an unassociated IOCP and starts a threadpool of numThreads threads which services the IOCP by calling startworkers
+* ```~ioService()``` : sets the running to false. Closes all threads after informing that all unfinished I/O requests are finished to all threads and closes the IOCP port 
+* ```startWorkers(numThreads) ```: initialises numThreads - 1 (as main is also a thread) using a lambda function and calls workerLoop for all the threads. Also set running to be true 
+* ```workerLoop()``` : this is called by all the thread. Let us look closely at the worker loop.
+``` 
+	void workerLoop() {
+		while(running_){
+			DWORD bytesTransfered;
+			ULONG_PTR completionKey;
+			OVERLAPPED* overlap;
+			// TODO use  GetQueuedCompletionStatusEx
+			// 1000 is timeout. Returns false after that
+			BOOL result = GetQueuedCompletionStatus(iocpHandle_, bytesReceived, &completionKey, &overlap, 1000);
+			if(!result){
+				DWORD error = GetLastError(); // threads last error 
+				if(error == WAIT_TIMEOUT) continue; // restart wait when timeout
+				if(overlap == nullptr) break; // stop sends a postCompletionRequest with overlap nullptr ending the workerloop
+			}
+			if(overlap) {
+				// note this overlap is populated by the same address as the overlap 
+				// struct which was called when calling WSASEND/REC
+				// hence the memory space has the same struct alignment 
+				// &context = &overlap as this overlap is the first member of the context
+				// so this context points to the same context.
+				// which contains socket.
+				ioContext* context = reinterpret_cast<ioContext*>overlap; // this is fine as the first member variable of context is overlap. Doesn't affect other variables.
+				context->bytesTransfered = bytesTransfered;
+				context->lastError = result ? 0: GetLastError();
+				completionReady(context);
+			}
+		}
+	}
+```
+If the IOCP is running, it goes to a infinite loop where it defines certain variables that can be filled by the system when Async I/O happens. Then it calls GetQueuedCompletionStatus(). This is a blocking call, that is thread is put to sleep till either timeout occurs(1000 ms) or some I/O gets completed. If this returns an error which is TIMEOUT, it restarts the GetQueuedCompletionStatus() allowing periodic check on running variable. If overlap is nullptr which can only happen when we send a nullptr to overlap using postCompletionRequest() from our stop variable, we break the thread allowing it to exit from the workerloop.
+If overlap is not null, that means it is set by the I/O or error which we pass to ioContext which can resume the original caller when completionReady is called.
+A very interesting note is that when we call the WSASEND or WSARECV we pass the memory location of the struct overlap. The GetCompletionRequest fills the new overlap with same address and hence they are essentially pointing to the same object. 
+Also as the first member of context is overlap the memory address of context is same as memory address of the overlap.
+
+* ```completionReady(context)``` : calls context.continuation.resume() to restart the original caller function
+* ```associateSocket(SOCKET socket)``` : creates a IOCP completion port associated with the socket. Essentially binds the IOCP to the socket passed.
+* ```postWrite(SOCKET socket, ioContext* context, char sendBuffer, ULONG bufferLen)```: uses a non blocking network call to send the message in sendBuffer to socket. It sends a completion notice to the IOCP if the network calls fails. Otherwise the OS updates the overlap data structure and sends a completion notice to a queue which is dequed by one of the thread.
+* ```postRead(SOCKET socket, ioContext* context) ``` : uses a nonblocking network call to receive a message from the given socket. It returns immediately. If read is succesful the OS notifies the worker thread on completion and fills the buffer and overlap struct with the relevant details. Else in case error, we manually let the thread know by send a completion request.
+
+
+#### tcpSocket
+This is a wrapper class which implements a tcp Socket.
 
 
 

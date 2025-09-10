@@ -46,3 +46,19 @@ Event loop manages context: The event loop, which runs on a single OS thread, si
 Task is not bound to a thread: A coroutine is an independent task. It can be paused and resumed on the same thread without the thread being blocked. The thread can work on other coroutines while one is suspended.
 
 The key difference is the granularity and overhead of the context switch. Threads are managed by the OS and have a high-cost context switch, while coroutines are managed by a runtime (event loop) and have a very low-cost context switch, allowing for massive concurrency on a single thread.
+
+
+### Pointer to a class vs class object :
+When you have a class which contains other classes as an member object should you use 
+object or the pointer to a object.
+
+Most of the time you should use the the object directly as it is safer and you dont have to manage lifetime directly and deal with null or dangling pointer.
+
+1. **Polymorphism**: If you have a base class and several derived classes, you can use a base class pointer to refer to objects of any of the derived types. This allows you to call virtual functions and have the correct derived class implementation execute at runtime.
+
+
+2. **Optional Objects**: When a member object might not always exist, a pointer (like std::unique_ptr) is an excellent way to represent that optionality. An empty std::unique_ptr clearly signals that the object is not present. This is safer and more expressive than a regular member object, which must always be constructed.
+
+3. **Large Objects**: If a class contains a very large object, storing it as a direct member can make the containing class unnecessarily large. Using a pointer to a heap-allocated object can reduce the size of the containing object, which can be beneficial for performance, especially when passing the object by value or storing it in containers.
+
+4. **Dynamic Lifetime**: When an object's lifetime is not tied to the scope of its creator, you need a pointer to manage it. This is common in factories, where one part of the code creates an object and another part is responsible for destroying it. Smart pointers like std::unique_ptr and std::shared_ptr are designed for these scenarios.

@@ -5,6 +5,40 @@
 *  **const vs constexpr** : const and constexpr both provides immutability. but for constexpr the initialisation value needs to be known at compile time. const can be initialised at runtime
 
 ## Concepts 
+### explicit 
+what does explicit keyword for a constructor
+
+An explicit constructor prevents the compiler from using that constructor for implicit conversions and copy-initialization. It forces callers to use direct-initialization (e.g., A a(1); or A a{1};) and blocks implicit conversions like A a = 1;.
+
+Why use it:
+Avoid accidental/undesired conversions.
+Make intent clear and reduce surprising overload resolution.
+examples 
+```cpp
+// Example showing difference
+struct A {
+    explicit A(int x) {}   // explicit prevents implicit conversions
+};
+
+struct B {
+    B(int x) {}            // non-explicit allows implicit conversions
+};
+
+void takesA(A) {}
+void takesB(B) {}
+
+int main() {
+    A a1(10);      // OK (direct-initialization)
+    A a2{10};      // OK (direct-list-initialization)
+    // A a3 = 10;  // ERROR: copy-initialization not allowed for explicit ctor
+
+    B b1 = 10;     // OK: implicit conversion from int to B
+    takesB(20);    // OK, implicit conversion creates B(20)
+    // takesA(20); // ERROR: cannot implicitly convert int -> A
+
+    return 0;
+}
+```
 ### Condition Variable
 A condition variable is a synchronization primitive in C++ used to block one or more threads until a specific condition is met. It's always used in conjunction with a mutex to protect the shared data that the condition variable is monitoring.
 A condition variable allows threads to "wait" efficiently instead of busy-waiting (constantly checking a condition in a loop, which wastes CPU cycles). There are two primary roles:
@@ -61,4 +95,6 @@ Most of the time you should use the the object directly as it is safer and you d
 
 3. **Large Objects**: If a class contains a very large object, storing it as a direct member can make the containing class unnecessarily large. Using a pointer to a heap-allocated object can reduce the size of the containing object, which can be beneficial for performance, especially when passing the object by value or storing it in containers.
 
-4. **Dynamic Lifetime**: When an object's lifetime is not tied to the scope of its creator, you need a pointer to manage it. This is common in factories, where one part of the code creates an object and another part is responsible for destroying it. Smart pointers like std::unique_ptr and std::shared_ptr are designed for these scenarios.
+   
+
+5. **Dynamic Lifetime**: When an object's lifetime is not tied to the scope of its creator, you need a pointer to manage it. This is common in factories, where one part of the code creates an object and another part is responsible for destroying it. Smart pointers like std::unique_ptr and std::shared_ptr are designed for these scenarios.
